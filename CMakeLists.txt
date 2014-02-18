@@ -10,6 +10,7 @@ find_package(Boost REQUIRED system filesystem date_time program_options signals 
 find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   moveit_core
+  moveit_ros_planning
   moveit_msgs
   roscpp
   urdf
@@ -25,6 +26,7 @@ catkin_package(
     ${THIS_PACKAGE_INCLUDE_DIRS}
   CATKIN_DEPENDS
     moveit_core
+    moveit_ros_planning
 )
 
 include_directories(${THIS_PACKAGE_INCLUDE_DIRS} 
@@ -42,6 +44,6 @@ add_subdirectory(srv_kinematics_plugin)
 
 install(
   FILES
-    kdl_kinematics_plugin_description.xml
+    srv_kinematics_plugin_description.xml
   DESTINATION
     ${CATKIN_PACKAGE_SHARE_DESTINATION})
