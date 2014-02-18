@@ -48,7 +48,6 @@
 // Eigen
 #include <Eigen/Core>
 #include <Eigen/Geometry>
-#include <eigen_conversions/eigen_msg.h>
 
 //register SRVKinematics as a KinematicsBase implementation
 CLASS_LOADER_REGISTER_CLASS(srv_kinematics_plugin::SrvKinematicsPlugin, kinematics::KinematicsBase)
@@ -56,10 +55,7 @@ CLASS_LOADER_REGISTER_CLASS(srv_kinematics_plugin::SrvKinematicsPlugin, kinemati
 namespace srv_kinematics_plugin
 {
 
-SrvKinematicsPlugin::SrvKinematicsPlugin():active_(false)
-{
-  ROS_ERROR_STREAM_NAMED("temp","testing SrvKinematicsPlugin loading");
-}
+SrvKinematicsPlugin::SrvKinematicsPlugin():active_(false) {}
 
 bool SrvKinematicsPlugin::isRedundantJoint(unsigned int index) const
 {
@@ -75,7 +71,7 @@ bool SrvKinematicsPlugin::initialize(const std::string &robot_description,
   const std::vector<std::string>& tip_frames,
   double search_discretization)
 {
-  ROS_ERROR_STREAM_NAMED("temp","testing SrvKinematicsPlugin initializing");
+  ROS_INFO_STREAM_NAMED("srv","SrvKinematicsPlugin initializing");
 
   setValues(robot_description, group_name, base_frame, tip_frames, search_discretization);
 
@@ -98,8 +94,7 @@ bool SrvKinematicsPlugin::initialize(const std::string &robot_description,
 
   if(!joint_model_group_->isSingleDOFJoints())
   {
-    ROS_ERROR_NAMED("srv","Group '%s' includes joints that have more than 1 DOF", group_name.c_str());
-    //return false;
+    ROS_DEBUG_NAMED("srv","Group '%s' includes joints that have more than 1 DOF", group_name.c_str());
   }
 
   // DEBUG
@@ -126,12 +121,16 @@ bool SrvKinematicsPlugin::initialize(const std::string &robot_description,
   //if(joint_model_group_->getJointModels()[i]->getType() == moveit::core::JointModel::REVOLUTE ||
   //   joint_model_group_->getJointModels()[i]->getType() == moveit::core::JointModel::PRISMATIC)
 
+  // DEBUG all tip links
+  ROS_ERROR_STREAM_NAMED("temp","tip links available:");
+  std::copy(tip_frames_.begin(), tip_frames_.end(), std::ostream_iterator<std::string>(std::cout, "\n"));
+
   // Make sure all the tip links are in the link_names vector
   for (std::size_t i = 0; i < tip_frames_.size(); ++i)
   {
     if(!joint_model_group_->hasLinkModel(tip_frames_[i]))
     {
-      ROS_ERROR_NAMED("srv","Could not find tip name in joint group '%s'", group_name.c_str());
+      ROS_ERROR_NAMED("srv","Could not find tip name '%s' in joint group '%s'", tip_frames_[i].c_str(), group_name.c_str());
       return false;
     }
     ik_group_info_.link_names.push_back(tip_frames_[i]);
@@ -145,15 +144,17 @@ bool SrvKinematicsPlugin::initialize(const std::string &robot_description,
 
   // Setup the joint state groups that we need
   robot_state_.reset(new robot_state::RobotState(robot_model_));
-  robot_state_->setToDefaultValues(); // TODO: this makes assumptions we shouldn't be making
+  robot_state_->setToDefaultValues(); // TODO: this makes assumptions we shouldn't be making?
 
   // Create the ROS service client
   // TODO: use private handle
   ros::NodeHandle nonprivate_handle("");
   ik_service_client_ = boost::make_shared<ros::ServiceClient>(nonprivate_handle.serviceClient
                        <moveit_msgs::GetPositionIK>(ik_service_name));
-  ROS_INFO_STREAM_NAMED("srv","Service client started with ROS service name: " << ik_service_client_->getService());
-  // TODO: check if service is up?
+  if (!ik_service_client_->waitForExistence(ros::Duration(5))) // wait 5 seconds, blocking
+    ROS_WARN_STREAM_NAMED("srv","Unable to connect to ROS service client with name: " << ik_service_client_->getService());
+  else
+    ROS_INFO_STREAM_NAMED("srv","Service client started with ROS service name: " << ik_service_client_->getService());
 
   active_ = true;
   ROS_DEBUG_NAMED("srv","ROS service-based kinematics solver initialized");
@@ -172,7 +173,6 @@ bool SrvKinematicsPlugin::setRedundantJoints(const std::vector<unsigned int> &re
     ROS_ERROR_NAMED("srv","This group can only have %d redundant joints", num_possible_redundant_joints_);
     return false;
   }
-
 
   return true;
 }
@@ -320,7 +320,7 @@ bool SrvKinematicsPlugin::searchPositionIK(const std::vector<geometry_msgs::Pose
   moveit_msgs::MoveItErrorCodes &error_code,
   const kinematics::KinematicsQueryOptions &options) const
 {
-
+  // Check if active
   if(!active_)
   {
     ROS_ERROR_NAMED("srv","kinematics not active");
@@ -328,40 +328,41 @@ bool SrvKinematicsPlugin::searchPositionIK(const std::vector<geometry_msgs::Pose
     return false;
   }
 
+  // Check if seed state correct
   if(ik_seed_state.size() != dimension_)
   {
     ROS_ERROR_STREAM_NAMED("srv","Seed state must have size " << dimension_ << " instead of size " << ik_seed_state.size());
     error_code.val = error_code.NO_IK_SOLUTION;
     return false;
   }
-  // Debug: what is the order of the ik seed state?
-  ROS_ERROR_STREAM_NAMED("temp","ik seed state for group " << group_name_ << ":");
-  std::copy(ik_seed_state.begin(), ik_seed_state.end(), std::ostream_iterator<double>(std::cout, "\n"));
-
-  // Create the service message
-  moveit_msgs::GetPositionIK ik_srv;
-  //  ik_srv.request.ik_request.group_name = ":fullbody-inverse-kinematics";
-  //ik_srv.request.ik_request.group_name = ":fullbody-inverse-kinematics (:fix-limbs (:rleg :lleg))"; // TODO fix this: getGroupName();
-  ik_srv.request.ik_request.group_name = ":fullbody-inverse-kinematics (:fix-limbs (:rleg :lleg) :debug-view nil)";
-  //ik_srv.request.ik_request.group_name = ":fullbody-inverse-kinematics (:fix-limbs (:rleg :lleg) :rotation-axis nil)";
-
-  // Copy in our seed state into our virtual robot state
-  robot_state_->setVariablePositions(getVariableNames(), ik_seed_state); // TODO: make more efficient  @isucan?
-  // Convert our robot state into a msg we can send
-  moveit::core::robotStateToRobotStateMsg(*robot_state_, ik_srv.request.ik_request.robot_state);
 
   // Check that we have the same number of poses as tips
   if (tip_frames_.size() != ik_poses.size())
   {
     ROS_ERROR_STREAM_NAMED("srv","Mismatched number of pose requests (" << ik_poses.size()
       << ") to tip frames (" << tip_frames_.size() << ") in searchPositionIK");
+    error_code.val = error_code.NO_IK_SOLUTION;
     return false;
   }
 
-  // Create a stamped pose
-  geometry_msgs::PoseStamped ik_pose_st;
+  // Debug: what is the order of the ik seed state?
+  //ROS_ERROR_STREAM_NAMED("temp","ik seed state for group " << group_name_ << ":");
+  //std::copy(ik_seed_state.begin(), ik_seed_state.end(), std::ostream_iterator<double>(std::cout, "\n"));
+
+  // Create the service message
+  moveit_msgs::GetPositionIK ik_srv;
+  // TODO fix this: getGroupName();
+  //ik_srv.request.ik_request.group_name = ":fullbody-inverse-kinematics (:debug-view nil)";
+  //ik_srv.request.ik_request.group_name = ":fullbody-inverse-kinematics (:fix-limbs (:rleg :lleg))";
+  ik_srv.request.ik_request.group_name = ":fullbody-inverse-kinematics (:fix-limbs (:rleg :lleg) :debug-view nil)";
+  //ik_srv.request.ik_request.group_name = ":fullbody-inverse-kinematics (:fix-limbs (:rleg :lleg) :rotation-axis nil)";
+
+  // Copy seed state into virtual robot state and convert into moveit_msg
+  robot_state_->setVariablePositions(getVariableNames(), ik_seed_state); // \todo: make more efficient  @isucan?
+  moveit::core::robotStateToRobotStateMsg(*robot_state_, ik_srv.request.ik_request.robot_state);
 
   // Load the poses into the request in difference places depending if there is more than one or not
+  geometry_msgs::PoseStamped ik_pose_st;
   if (tip_frames_.size() > 1)
   {
     // Load into vector of poses
@@ -379,8 +380,7 @@ bool SrvKinematicsPlugin::searchPositionIK(const std::vector<geometry_msgs::Pose
     ik_pose_st.pose = ik_poses[0];
     ik_pose_st.header.frame_id = base_frame_;
     ik_srv.request.ik_request.pose_stamped = ik_pose_st;
-    ik_srv.request.ik_request.ik_link_name = getTipFrame();
-    ROS_ERROR_STREAM_NAMED("temp","tip frame is " << getTipFrame());
+    ik_srv.request.ik_request.ik_link_name = getTipFrames()[0];
   }
 
   ROS_INFO_STREAM("Request is: \n" << ik_srv.request.ik_request);
@@ -388,64 +388,72 @@ bool SrvKinematicsPlugin::searchPositionIK(const std::vector<geometry_msgs::Pose
   ROS_INFO_STREAM("Calling service: " << ik_service_client_->getService() );
   if (ik_service_client_->call(ik_srv))
   {
-    //result_angle = ik_srv.response.solution.joint_state.position;
     ROS_INFO_STREAM("Service response recieved, message: \n" << ik_srv.response.solution);
   }
   else
   {
-    ROS_ERROR_STREAM("SERVICE FAILED");
-  }
-
-  error_code.val = ik_srv.response.error_code.val;
-
-  if(error_code.val != 1)
-  {
-    ROS_DEBUG_NAMED("srv","An IK that satisifes the constraints and is collision free could not be found.");
-    ROS_ERROR_STREAM_NAMED("srv","Exited with error code: " << error_code.val);
+    ROS_ERROR_STREAM("Service call failed to connect to service: " << ik_service_client_->getService() );
+    error_code.val = error_code.FAILURE;
     return false;
   }
 
-  ROS_INFO_STREAM_NAMED("srv","SUCCESS.");
+  // Check error code
+  error_code.val = ik_srv.response.error_code.val;
+  if(error_code.val != error_code.SUCCESS)
+  {
+    ROS_DEBUG_NAMED("srv","An IK that satisifes the constraints and is collision free could not be found.");
+    switch (error_code.val)
+    {
+      case moveit_msgs::MoveItErrorCodes::FAILURE:
+        ROS_ERROR_STREAM_NAMED("srv","Service failed with with error code: FAILURE");
+        break;
+      case moveit_msgs::MoveItErrorCodes::NO_IK_SOLUTION:
+        ROS_ERROR_STREAM_NAMED("srv","Service failed with with error code: NO IK SOLUTION");
+        break;
+      default:
+        ROS_ERROR_STREAM_NAMED("srv","Service failed with with error code: " << error_code.val);
+    }
+    return false;
+  }
 
-  // Get a pointer to the solution
-  sensor_msgs::JointState *joint_state = &ik_srv.response.solution.joint_state;
+  // Hack: add in the finger joints for now:
+  ik_srv.response.solution.joint_state.name.push_back("L_INDEXMP_P");    
+  ik_srv.response.solution.joint_state.name.push_back("L_INDEXMP_R");
+  ik_srv.response.solution.joint_state.name.push_back("L_INDEXPIP_R");
+  ik_srv.response.solution.joint_state.name.push_back("L_MIDDLEPIP_R");
+  ik_srv.response.solution.joint_state.name.push_back("L_THUMBCM_P");
+  ik_srv.response.solution.joint_state.name.push_back("L_THUMBCM_Y");
+  ik_srv.response.solution.joint_state.name.push_back("R_INDEXMP_P");
+  ik_srv.response.solution.joint_state.name.push_back("R_INDEXMP_R");
+  ik_srv.response.solution.joint_state.name.push_back("R_INDEXPIP_R");
+  ik_srv.response.solution.joint_state.name.push_back("R_MIDDLEPIP_R");
+  ik_srv.response.solution.joint_state.name.push_back("R_THUMBCM_P");
+  ik_srv.response.solution.joint_state.name.push_back("R_THUMBCM_Y");
+  ik_srv.response.solution.joint_state.position.push_back(0.0);
+  ik_srv.response.solution.joint_state.position.push_back(0.0);
+  ik_srv.response.solution.joint_state.position.push_back(0.0);
+  ik_srv.response.solution.joint_state.position.push_back(0.0);
+  ik_srv.response.solution.joint_state.position.push_back(0.0);
+  ik_srv.response.solution.joint_state.position.push_back(0.0);
+  ik_srv.response.solution.joint_state.position.push_back(0.0);
+  ik_srv.response.solution.joint_state.position.push_back(0.0);
+  ik_srv.response.solution.joint_state.position.push_back(0.0);
+  ik_srv.response.solution.joint_state.position.push_back(0.0);
+  ik_srv.response.solution.joint_state.position.push_back(0.0);
+  ik_srv.response.solution.joint_state.position.push_back(0.0);
 
-  ROS_ERROR_STREAM_NAMED("temp","TODO: remove these conversions!");
-  // Extract rpy
-  double angle_r = joint_state->position[joint_state->position.size() - 3];
-  double angle_p = joint_state->position[joint_state->position.size() - 2];
-  double angle_y = joint_state->position[joint_state->position.size() - 1];
-
-  // Convert recieved rpy to quaternions
-  Eigen::Quaternion<float> q;
-  Eigen::AngleAxis<float> aaZ(angle_r, Eigen::Vector3f::UnitZ());
-  Eigen::AngleAxis<float> aaY(angle_p, Eigen::Vector3f::UnitY());
-  Eigen::AngleAxis<float> aaX(angle_y, Eigen::Vector3f::UnitX());
-  q = aaZ * aaY * aaX;
-
-  // Erase the rotation matrix because they are in the wrong format
-  joint_state->name.erase(joint_state->name.end()-3, joint_state->name.end());
-  joint_state->position.erase(joint_state->position.end()-3, joint_state->position.end());
-
-  // Insert new values
-  joint_state->name.push_back("virtual_joint/rot_x");
-  joint_state->name.push_back("virtual_joint/rot_y");
-  joint_state->name.push_back("virtual_joint/rot_z");
-  joint_state->name.push_back("virtual_joint/rot_w");
-  joint_state->position.push_back(q.x());
-  joint_state->position.push_back(q.y());
-  joint_state->position.push_back(q.z());
-  joint_state->position.push_back(q.w());
-
-  //std::vector<std::string> testing_names = robot_state_->getVariableNames();
-  //ROS_ERROR_STREAM_NAMED("temp","variable names are:");
-  //std::copy(testing_names.begin(), testing_names.end(), std::ostream_iterator<std::string>(std::cout, "\n"));
-
-  // Update our robot with the service response
-  robot_state_->setVariablePositions(joint_state->name, joint_state->position);
+  // Convert the robot state message to our robot_state representation
+  if (!moveit::core::robotStateMsgToRobotState(ik_srv.response.solution, *robot_state_))
+  {
+    ROS_ERROR_STREAM_NAMED("srv","An error occured converting recieved robot state message into internal robot state.");
+    error_code.val = error_code.FAILURE;
+    return false;
+  }
 
   // Get just the joints we are concerned about in our planning group
   robot_state_->copyJointGroupPositions(joint_model_group_, solution);
+
+  ROS_DEBUG_STREAM_NAMED("srv","returning solution of size " << solution.size() );
 
   return true;
 }
