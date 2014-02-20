@@ -123,8 +123,8 @@ bool SrvKinematicsPlugin::initialize(const std::string &robot_description,
   //   joint_model_group_->getJointModels()[i]->getType() == moveit::core::JointModel::PRISMATIC)
 
   // DEBUG all tip links
-  ROS_ERROR_STREAM_NAMED("temp","tip links available:");
-  std::copy(tip_frames_.begin(), tip_frames_.end(), std::ostream_iterator<std::string>(std::cout, "\n"));
+  //ROS_ERROR_STREAM_NAMED("temp","tip links available:");
+  //std::copy(tip_frames_.begin(), tip_frames_.end(), std::ostream_iterator<std::string>(std::cout, "\n"));
 
   // Make sure all the tip links are in the link_names vector
   for (std::size_t i = 0; i < tip_frames_.size(); ++i)
@@ -365,7 +365,7 @@ bool SrvKinematicsPlugin::searchPositionIK(const std::vector<geometry_msgs::Pose
 
   // Load the poses into the request in difference places depending if there is more than one or not
   geometry_msgs::PoseStamped ik_pose_st;
-  static const std::string POSE_FRAME = "BODY"
+  static const std::string POSE_FRAME = "BODY";
   tf::Transform tf_world_to_base, tf_pose_to_world;
   // Get the transpose from base to world frame
   tf::poseEigenToTF(robot_state_->getGlobalLinkTransform(POSE_FRAME), tf_world_to_base);
@@ -399,12 +399,12 @@ bool SrvKinematicsPlugin::searchPositionIK(const std::vector<geometry_msgs::Pose
     ik_srv.request.ik_request.ik_link_name = getTipFrames()[0];
   }
 
-  ROS_DEBUG_STREAM("Request is: \n" << ik_srv.request.ik_request);
+  //ROS_DEBUG_STREAM("Request is: \n" << ik_srv.request.ik_request);
 
   ROS_DEBUG_STREAM_NAMED("srv","Calling service: " << ik_service_client_->getService() );
   if (ik_service_client_->call(ik_srv))
   {
-    ROS_DEBUG_STREAM("Service response recieved, message: \n" << ik_srv.response.solution);
+    //ROS_DEBUG_STREAM("Service response recieved, message: \n" << ik_srv.response.solution);
 
     // Check error code
     error_code.val = ik_srv.response.error_code.val;
@@ -414,8 +414,8 @@ bool SrvKinematicsPlugin::searchPositionIK(const std::vector<geometry_msgs::Pose
       switch (error_code.val)
       {
         // Debug mode for failure:
-        //ROS_DEBUG_STREAM("Request was: \n" << ik_srv.request.ik_request);
-        //ROS_DEBUG_STREAM("Response was: \n" << ik_srv.response.solution);
+        ROS_DEBUG_STREAM("Request was: \n" << ik_srv.request.ik_request);
+        ROS_DEBUG_STREAM("Response was: \n" << ik_srv.response.solution);
 
         case moveit_msgs::MoveItErrorCodes::FAILURE:
           ROS_ERROR_STREAM_NAMED("srv","Service failed with with error code: FAILURE");
