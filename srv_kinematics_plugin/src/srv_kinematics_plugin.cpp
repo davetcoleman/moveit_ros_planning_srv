@@ -48,6 +48,7 @@
 // Eigen
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+#include <tf_conversions/tf_eigen.h>
 
 //register SRVKinematics as a KinematicsBase implementation
 CLASS_LOADER_REGISTER_CLASS(srv_kinematics_plugin::SrvKinematicsPlugin, kinematics::KinematicsBase)
@@ -351,6 +352,7 @@ bool SrvKinematicsPlugin::searchPositionIK(const std::vector<geometry_msgs::Pose
 
   // Create the service message
   moveit_msgs::GetPositionIK ik_srv;
+  ik_srv.request.ik_request.avoid_collisions = true;
   // TODO fix this: getGroupName();
   //ik_srv.request.ik_request.group_name = ":fullbody-inverse-kinematics (:debug-view nil)";
   //ik_srv.request.ik_request.group_name = ":fullbody-inverse-kinematics (:fix-limbs (:rleg :lleg))";
@@ -363,32 +365,69 @@ bool SrvKinematicsPlugin::searchPositionIK(const std::vector<geometry_msgs::Pose
 
   // Load the poses into the request in difference places depending if there is more than one or not
   geometry_msgs::PoseStamped ik_pose_st;
+  static const std::string POSE_FRAME = "BODY"
+  tf::Transform tf_world_to_base, tf_pose_to_world;
+  // Get the transpose from base to world frame
+  tf::poseEigenToTF(robot_state_->getGlobalLinkTransform(POSE_FRAME), tf_world_to_base);
+
+  ik_pose_st.header.frame_id = POSE_FRAME; //base_frame_
   if (tip_frames_.size() > 1)
   {
     // Load into vector of poses
     for (std::size_t i = 0; i < tip_frames_.size(); ++i)
     {
-      ik_pose_st.pose = ik_poses[i];
-      ik_pose_st.header.frame_id = base_frame_;
+      // ----------------------------------------------------------------
+      // Convert the pose into the frame of reference of the base link    
+      tf::poseMsgToTF(ik_poses[i], tf_pose_to_world); // Get the input pose - in world frame of reference    
+      tf::poseTFToMsg(tf_pose_to_world * tf_world_to_base.inverse(), ik_pose_st.pose); // Convert back to ROS message
+      // ----------------------------------------------------------------
+
       ik_srv.request.ik_request.pose_stamped_vector.push_back(ik_pose_st);
       ik_srv.request.ik_request.ik_link_names.push_back(tip_frames_[i]);
     }
   }
   else
   {
+    // ----------------------------------------------------------------
+    // Convert the pose into the frame of reference of the base link    
+    tf::poseMsgToTF(ik_poses[0], tf_pose_to_world); // Get the input pose - in world frame of reference    
+    tf::poseTFToMsg(tf_pose_to_world * tf_world_to_base.inverse(), ik_pose_st.pose); // Convert back to ROS message
+    // ----------------------------------------------------------------
+
     // Load into single pose value
-    ik_pose_st.pose = ik_poses[0];
-    ik_pose_st.header.frame_id = base_frame_;
     ik_srv.request.ik_request.pose_stamped = ik_pose_st;
     ik_srv.request.ik_request.ik_link_name = getTipFrames()[0];
   }
 
-  ROS_INFO_STREAM("Request is: \n" << ik_srv.request.ik_request);
+  ROS_DEBUG_STREAM("Request is: \n" << ik_srv.request.ik_request);
 
-  ROS_INFO_STREAM("Calling service: " << ik_service_client_->getService() );
+  ROS_DEBUG_STREAM_NAMED("srv","Calling service: " << ik_service_client_->getService() );
   if (ik_service_client_->call(ik_srv))
   {
-    ROS_INFO_STREAM("Service response recieved, message: \n" << ik_srv.response.solution);
+    ROS_DEBUG_STREAM("Service response recieved, message: \n" << ik_srv.response.solution);
+
+    // Check error code
+    error_code.val = ik_srv.response.error_code.val;
+    if(error_code.val != error_code.SUCCESS)
+    {
+      ROS_DEBUG_NAMED("srv","An IK that satisifes the constraints and is collision free could not be found.");
+      switch (error_code.val)
+      {
+        // Debug mode for failure:
+        //ROS_DEBUG_STREAM("Request was: \n" << ik_srv.request.ik_request);
+        //ROS_DEBUG_STREAM("Response was: \n" << ik_srv.response.solution);
+
+        case moveit_msgs::MoveItErrorCodes::FAILURE:
+          ROS_ERROR_STREAM_NAMED("srv","Service failed with with error code: FAILURE");
+          break;
+        case moveit_msgs::MoveItErrorCodes::NO_IK_SOLUTION:
+          ROS_ERROR_STREAM_NAMED("srv","Service failed with with error code: NO IK SOLUTION");
+          break;
+        default:
+          ROS_ERROR_STREAM_NAMED("srv","Service failed with with error code: " << error_code.val);
+      }
+      return false;
+    }
   }
   else
   {
@@ -396,51 +435,6 @@ bool SrvKinematicsPlugin::searchPositionIK(const std::vector<geometry_msgs::Pose
     error_code.val = error_code.FAILURE;
     return false;
   }
-
-  // Check error code
-  error_code.val = ik_srv.response.error_code.val;
-  if(error_code.val != error_code.SUCCESS)
-  {
-    ROS_DEBUG_NAMED("srv","An IK that satisifes the constraints and is collision free could not be found.");
-    switch (error_code.val)
-    {
-      case moveit_msgs::MoveItErrorCodes::FAILURE:
-        ROS_ERROR_STREAM_NAMED("srv","Service failed with with error code: FAILURE");
-        break;
-      case moveit_msgs::MoveItErrorCodes::NO_IK_SOLUTION:
-        ROS_ERROR_STREAM_NAMED("srv","Service failed with with error code: NO IK SOLUTION");
-        break;
-      default:
-        ROS_ERROR_STREAM_NAMED("srv","Service failed with with error code: " << error_code.val);
-    }
-    return false;
-  }
-
-  // Hack: add in the finger joints for now:
-  ik_srv.response.solution.joint_state.name.push_back("L_INDEXMP_P");    
-  ik_srv.response.solution.joint_state.name.push_back("L_INDEXMP_R");
-  ik_srv.response.solution.joint_state.name.push_back("L_INDEXPIP_R");
-  ik_srv.response.solution.joint_state.name.push_back("L_MIDDLEPIP_R");
-  ik_srv.response.solution.joint_state.name.push_back("L_THUMBCM_P");
-  ik_srv.response.solution.joint_state.name.push_back("L_THUMBCM_Y");
-  ik_srv.response.solution.joint_state.name.push_back("R_INDEXMP_P");
-  ik_srv.response.solution.joint_state.name.push_back("R_INDEXMP_R");
-  ik_srv.response.solution.joint_state.name.push_back("R_INDEXPIP_R");
-  ik_srv.response.solution.joint_state.name.push_back("R_MIDDLEPIP_R");
-  ik_srv.response.solution.joint_state.name.push_back("R_THUMBCM_P");
-  ik_srv.response.solution.joint_state.name.push_back("R_THUMBCM_Y");
-  ik_srv.response.solution.joint_state.position.push_back(0.0);
-  ik_srv.response.solution.joint_state.position.push_back(0.0);
-  ik_srv.response.solution.joint_state.position.push_back(0.0);
-  ik_srv.response.solution.joint_state.position.push_back(0.0);
-  ik_srv.response.solution.joint_state.position.push_back(0.0);
-  ik_srv.response.solution.joint_state.position.push_back(0.0);
-  ik_srv.response.solution.joint_state.position.push_back(0.0);
-  ik_srv.response.solution.joint_state.position.push_back(0.0);
-  ik_srv.response.solution.joint_state.position.push_back(0.0);
-  ik_srv.response.solution.joint_state.position.push_back(0.0);
-  ik_srv.response.solution.joint_state.position.push_back(0.0);
-  ik_srv.response.solution.joint_state.position.push_back(0.0);
 
   // Convert the robot state message to our robot_state representation
   if (!moveit::core::robotStateMsgToRobotState(ik_srv.response.solution, *robot_state_))
@@ -453,8 +447,32 @@ bool SrvKinematicsPlugin::searchPositionIK(const std::vector<geometry_msgs::Pose
   // Get just the joints we are concerned about in our planning group
   robot_state_->copyJointGroupPositions(joint_model_group_, solution);
 
-  ROS_DEBUG_STREAM_NAMED("srv","returning solution of size " << solution.size() );
+  // Run the solution callback (i.e. collision checker) if available
+  if (!solution_callback.empty())
+  {
+    ROS_DEBUG_STREAM_NAMED("srv","Calling solution callback on IK solution");
 
+    // hack: should use all poses, not just the 0th
+    solution_callback(ik_poses[0], solution, error_code);
+
+    if(error_code.val != error_code.SUCCESS)
+    {
+      switch (error_code.val)
+      {
+        case moveit_msgs::MoveItErrorCodes::FAILURE:
+          ROS_ERROR_STREAM_NAMED("srv","IK solution callback failed with with error code: FAILURE");
+          break;
+        case moveit_msgs::MoveItErrorCodes::NO_IK_SOLUTION:
+          ROS_ERROR_STREAM_NAMED("srv","IK solution callback failed with with error code: NO IK SOLUTION");
+          break;
+        default:
+          ROS_ERROR_STREAM_NAMED("srv","IK solution callback failed with with error code: " << error_code.val);
+      }
+      return false;
+    }
+  }
+
+  ROS_INFO_STREAM_NAMED("srv","IK Solver Succeeded!");
   return true;
 }
 
@@ -480,19 +498,16 @@ bool SrvKinematicsPlugin::getPositionFK(const std::vector<std::string> &link_nam
 
 const std::vector<std::string>& SrvKinematicsPlugin::getJointNames() const
 {
-  ROS_DEBUG_STREAM_NAMED("srv","getJointNames called");
   return ik_group_info_.joint_names;
 }
 
 const std::vector<std::string>& SrvKinematicsPlugin::getLinkNames() const
 {
-  ROS_DEBUG_STREAM_NAMED("srv","getLinkNames called");
   return ik_group_info_.link_names;
 }
 
 const std::vector<std::string>& SrvKinematicsPlugin::getVariableNames() const
 {
-  ROS_DEBUG_STREAM_NAMED("srv","getVariableNames called");
   return joint_model_group_->getVariableNames();
 }
 

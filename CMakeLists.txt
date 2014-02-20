@@ -14,6 +14,7 @@ find_package(catkin REQUIRED COMPONENTS
   moveit_msgs
   roscpp
   urdf
+  tf_conversions
 )
 
 set(THIS_PACKAGE_INCLUDE_DIRS
