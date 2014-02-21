@@ -93,16 +93,16 @@ bool SrvKinematicsPlugin::initialize(const std::string &robot_description,
   if (!joint_model_group_)
     return false;
 
-  if(!joint_model_group_->isSingleDOFJoints())
+  /*if(!joint_model_group_->isSingleDOFJoints())
   {
     ROS_DEBUG_NAMED("srv","Group '%s' includes joints that have more than 1 DOF", group_name.c_str());
-  }
+    }*/
 
   // DEBUG
-  std::cout << std::endl << "Joint Model Variable Names: ------------------------------------------- " << std::endl;
-  const std::vector<std::string> jm_names = joint_model_group_->getVariableNames();
-  std::copy(jm_names.begin(), jm_names.end(), std::ostream_iterator<std::string>(std::cout, "\n"));
-  std::cout << std::endl;
+  //std::cout << std::endl << "Joint Model Variable Names: ------------------------------------------- " << std::endl;
+  //const std::vector<std::string> jm_names = joint_model_group_->getVariableNames();
+  //std::copy(jm_names.begin(), jm_names.end(), std::ostream_iterator<std::string>(std::cout, "\n"));
+  //std::cout << std::endl;
 
   //dimension_ = joint_model_group_->getActiveJointModels().size() + joint_model_group_->getMimicJointModels().size();
   dimension_ = joint_model_group_->getVariableCount(); // TODO: exclude mimic joints
@@ -111,12 +111,12 @@ bool SrvKinematicsPlugin::initialize(const std::string &robot_description,
     << ". Mimic Joint Models: " << joint_model_group_->getMimicJointModels().size());
 
   // Copy joint names
-  std::cout << std::endl << "Saved Joint Model Names: ------------------------------------------- " << std::endl;
+  //std::cout << std::endl << "Saved Joint Model Names: ------------------------------------------- " << std::endl;
   for (std::size_t i=0; i < joint_model_group_->getJointModels().size(); ++i)
   {
     ik_group_info_.joint_names.push_back(joint_model_group_->getJointModelNames()[i]);
     // DEBUG remove
-    std::cout << "  " << joint_model_group_->getJointModelNames()[i] << std::endl;
+    //std::cout << "  " << joint_model_group_->getJointModelNames()[i] << std::endl;
   }
 
   //if(joint_model_group_->getJointModels()[i]->getType() == moveit::core::JointModel::REVOLUTE ||
@@ -152,7 +152,7 @@ bool SrvKinematicsPlugin::initialize(const std::string &robot_description,
   ros::NodeHandle nonprivate_handle("");
   ik_service_client_ = boost::make_shared<ros::ServiceClient>(nonprivate_handle.serviceClient
                        <moveit_msgs::GetPositionIK>(ik_service_name));
-  if (!ik_service_client_->waitForExistence(ros::Duration(5))) // wait 5 seconds, blocking
+  if (!ik_service_client_->waitForExistence(ros::Duration(0.1))) // wait 0.1 seconds, blocking
     ROS_WARN_STREAM_NAMED("srv","Unable to connect to ROS service client with name: " << ik_service_client_->getService());
   else
     ROS_INFO_STREAM_NAMED("srv","Service client started with ROS service name: " << ik_service_client_->getService());
