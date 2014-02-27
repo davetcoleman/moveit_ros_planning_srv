@@ -42,13 +42,11 @@
 #include <srdfdom/model.h>
 
 #include <moveit/robot_state/conversions.h>
-
 #include <moveit/rdf_loader/rdf_loader.h>
 
 // Eigen
 #include <Eigen/Core>
 #include <Eigen/Geometry>
-#include <tf_conversions/tf_eigen.h>
 
 //register SRVKinematics as a KinematicsBase implementation
 CLASS_LOADER_REGISTER_CLASS(srv_kinematics_plugin::SrvKinematicsPlugin, kinematics::KinematicsBase)
@@ -56,15 +54,9 @@ CLASS_LOADER_REGISTER_CLASS(srv_kinematics_plugin::SrvKinematicsPlugin, kinemati
 namespace srv_kinematics_plugin
 {
 
-SrvKinematicsPlugin::SrvKinematicsPlugin():active_(false) {}
-
-bool SrvKinematicsPlugin::isRedundantJoint(unsigned int index) const
-{
-  for (std::size_t j=0; j < redundant_joint_indices_.size(); ++j)
-    if (redundant_joint_indices_[j] == index)
-      return true;
-  return false;
-}
+SrvKinematicsPlugin::SrvKinematicsPlugin()
+ : active_(false) 
+{}
 
 bool SrvKinematicsPlugin::initialize(const std::string &robot_description,
   const std::string& group_name,
@@ -72,6 +64,8 @@ bool SrvKinematicsPlugin::initialize(const std::string &robot_description,
   const std::vector<std::string>& tip_frames,
   double search_discretization)
 {
+  bool debug = false;
+
   ROS_INFO_STREAM_NAMED("srv","SrvKinematicsPlugin initializing");
 
   setValues(robot_description, group_name, base_frame, tip_frames, search_discretization);
@@ -93,38 +87,31 @@ bool SrvKinematicsPlugin::initialize(const std::string &robot_description,
   if (!joint_model_group_)
     return false;
 
-  /*if(!joint_model_group_->isSingleDOFJoints())
+  if (debug)
   {
-    ROS_DEBUG_NAMED("srv","Group '%s' includes joints that have more than 1 DOF", group_name.c_str());
-    }*/
+    std::cout << std::endl << "Joint Model Variable Names: ------------------------------------------- " << std::endl;
+    const std::vector<std::string> jm_names = joint_model_group_->getVariableNames();
+    std::copy(jm_names.begin(), jm_names.end(), std::ostream_iterator<std::string>(std::cout, "\n"));
+    std::cout << std::endl;
+  }
 
-  // DEBUG
-  //std::cout << std::endl << "Joint Model Variable Names: ------------------------------------------- " << std::endl;
-  //const std::vector<std::string> jm_names = joint_model_group_->getVariableNames();
-  //std::copy(jm_names.begin(), jm_names.end(), std::ostream_iterator<std::string>(std::cout, "\n"));
-  //std::cout << std::endl;
-
-  //dimension_ = joint_model_group_->getActiveJointModels().size() + joint_model_group_->getMimicJointModels().size();
-  dimension_ = joint_model_group_->getVariableCount(); // TODO: exclude mimic joints
+  // Get the dimension of the planning group
+  dimension_ = joint_model_group_->getVariableCount(); 
   ROS_INFO_STREAM_NAMED("srv","Dimension planning group '" << group_name << "': " << dimension_
     << ". Active Joints Models: " << joint_model_group_->getActiveJointModels().size()
     << ". Mimic Joint Models: " << joint_model_group_->getMimicJointModels().size());
 
   // Copy joint names
-  //std::cout << std::endl << "Saved Joint Model Names: ------------------------------------------- " << std::endl;
   for (std::size_t i=0; i < joint_model_group_->getJointModels().size(); ++i)
   {
     ik_group_info_.joint_names.push_back(joint_model_group_->getJointModelNames()[i]);
-    // DEBUG remove
-    //std::cout << "  " << joint_model_group_->getJointModelNames()[i] << std::endl;
   }
 
-  //if(joint_model_group_->getJointModels()[i]->getType() == moveit::core::JointModel::REVOLUTE ||
-  //   joint_model_group_->getJointModels()[i]->getType() == moveit::core::JointModel::PRISMATIC)
-
-  // DEBUG all tip links
-  //ROS_ERROR_STREAM_NAMED("temp","tip links available:");
-  //std::copy(tip_frames_.begin(), tip_frames_.end(), std::ostream_iterator<std::string>(std::cout, "\n"));
+  if (debug)
+  {
+    ROS_ERROR_STREAM_NAMED("temp","tip links available:");
+    std::copy(tip_frames_.begin(), tip_frames_.end(), std::ostream_iterator<std::string>(std::cout, "\n"));
+  }
 
   // Make sure all the tip links are in the link_names vector
   for (std::size_t i = 0; i < tip_frames_.size(); ++i)
@@ -145,10 +132,9 @@ bool SrvKinematicsPlugin::initialize(const std::string &robot_description,
 
   // Setup the joint state groups that we need
   robot_state_.reset(new robot_state::RobotState(robot_model_));
-  robot_state_->setToDefaultValues(); // TODO: this makes assumptions we shouldn't be making?
+  robot_state_->setToDefaultValues();
 
   // Create the ROS service client
-  // TODO: use private handle
   ros::NodeHandle nonprivate_handle("");
   ik_service_client_ = boost::make_shared<ros::ServiceClient>(nonprivate_handle.serviceClient
                        <moveit_msgs::GetPositionIK>(ik_service_name));
@@ -176,6 +162,14 @@ bool SrvKinematicsPlugin::setRedundantJoints(const std::vector<unsigned int> &re
   }
 
   return true;
+}
+
+bool SrvKinematicsPlugin::isRedundantJoint(unsigned int index) const
+{
+  for (std::size_t j=0; j < redundant_joint_indices_.size(); ++j)
+    if (redundant_joint_indices_[j] == index)
+      return true;
+  return false;
 }
 
 int SrvKinematicsPlugin::getJointIndex(const std::string &name) const
@@ -311,7 +305,6 @@ bool SrvKinematicsPlugin::searchPositionIK(const geometry_msgs::Pose &ik_pose,
     options);
 }
 
-// RequestIK from remote node
 bool SrvKinematicsPlugin::searchPositionIK(const std::vector<geometry_msgs::Pose> &ik_poses,
   const std::vector<double> &ik_seed_state,
   double timeout,
@@ -346,53 +339,31 @@ bool SrvKinematicsPlugin::searchPositionIK(const std::vector<geometry_msgs::Pose
     return false;
   }
 
-  // Debug: what is the order of the ik seed state?
-  //ROS_ERROR_STREAM_NAMED("temp","ik seed state for group " << group_name_ << ":");
-  //std::copy(ik_seed_state.begin(), ik_seed_state.end(), std::ostream_iterator<double>(std::cout, "\n"));
-
   // Create the service message
   moveit_msgs::GetPositionIK ik_srv;
   ik_srv.request.ik_request.avoid_collisions = true;
-  // TODO fix this: getGroupName();
-  //ik_srv.request.ik_request.group_name = ":fullbody-inverse-kinematics (:debug-view nil)";
-  //ik_srv.request.ik_request.group_name = ":fullbody-inverse-kinematics (:fix-limbs (:rleg :lleg))";
-  ik_srv.request.ik_request.group_name = ":fullbody-inverse-kinematics (:fix-limbs (:rleg :lleg) :debug-view nil)";
-  //ik_srv.request.ik_request.group_name = ":fullbody-inverse-kinematics (:fix-limbs (:rleg :lleg) :rotation-axis nil)";
+  ik_srv.request.ik_request.group_name = getGroupName();
 
   // Copy seed state into virtual robot state and convert into moveit_msg
-  robot_state_->setVariablePositions(getVariableNames(), ik_seed_state); // \todo: make more efficient  @isucan?
+  robot_state_->setJointGroupPositions(joint_model_group_, ik_seed_state);
   moveit::core::robotStateToRobotStateMsg(*robot_state_, ik_srv.request.ik_request.robot_state);
 
   // Load the poses into the request in difference places depending if there is more than one or not
   geometry_msgs::PoseStamped ik_pose_st;
-  static const std::string POSE_FRAME = "BODY";
-  tf::Transform tf_world_to_base, tf_pose_to_world;
-  // Get the transpose from base to world frame
-  tf::poseEigenToTF(robot_state_->getGlobalLinkTransform(POSE_FRAME), tf_world_to_base);
-
-  ik_pose_st.header.frame_id = POSE_FRAME; //base_frame_
+  ik_pose_st.header.frame_id = base_frame_;
   if (tip_frames_.size() > 1)
   {
     // Load into vector of poses
     for (std::size_t i = 0; i < tip_frames_.size(); ++i)
     {
-      // ----------------------------------------------------------------
-      // Convert the pose into the frame of reference of the base link    
-      tf::poseMsgToTF(ik_poses[i], tf_pose_to_world); // Get the input pose - in world frame of reference    
-      tf::poseTFToMsg(tf_pose_to_world * tf_world_to_base.inverse(), ik_pose_st.pose); // Convert back to ROS message
-      // ----------------------------------------------------------------
-
+      ik_pose_st.pose = ik_poses[i];
       ik_srv.request.ik_request.pose_stamped_vector.push_back(ik_pose_st);
       ik_srv.request.ik_request.ik_link_names.push_back(tip_frames_[i]);
     }
   }
   else
   {
-    // ----------------------------------------------------------------
-    // Convert the pose into the frame of reference of the base link    
-    tf::poseMsgToTF(ik_poses[0], tf_pose_to_world); // Get the input pose - in world frame of reference    
-    tf::poseTFToMsg(tf_pose_to_world * tf_world_to_base.inverse(), ik_pose_st.pose); // Convert back to ROS message
-    // ----------------------------------------------------------------
+    ik_pose_st.pose = ik_poses[0];
 
     // Load into single pose value
     ik_srv.request.ik_request.pose_stamped = ik_pose_st;
@@ -400,7 +371,6 @@ bool SrvKinematicsPlugin::searchPositionIK(const std::vector<geometry_msgs::Pose
   }
 
   //ROS_DEBUG_STREAM("Request is: \n" << ik_srv.request.ik_request);
-
   ROS_DEBUG_STREAM_NAMED("srv","Calling service: " << ik_service_client_->getService() );
   if (ik_service_client_->call(ik_srv))
   {
@@ -493,7 +463,9 @@ bool SrvKinematicsPlugin::getPositionFK(const std::vector<std::string> &link_nam
     return false;
   }
 
-  return true; //TODO
+  ROS_ERROR_STREAM_NAMED("srv","Forward kinematics not implemented");
+
+  return false;
 }
 
 const std::vector<std::string>& SrvKinematicsPlugin::getJointNames() const

@@ -32,14 +32,18 @@
  *  POSSIBILITY OF SUCH DAMAGE.
  *********************************************************************/
 
-/* Author: Dave Coleman, Masaki Murooka */
+/* Author: Dave Coleman, Masaki Murooka
+   Desc:   Connects MoveIt to any inverse kinematics solver via a ROS service call
+           Supports planning groups with multiple tip frames
+           \todo: better support for mimic joints
+           \todo: better support for redundant joints
+*/
 
 #ifndef MOVEIT_ROS_PLANNING_SRV_KINEMATICS_PLUGIN_
 #define MOVEIT_ROS_PLANNING_SRV_KINEMATICS_PLUGIN_
 
 // ROS
 #include <ros/ros.h>
-#include <random_numbers/random_numbers.h>
 
 // System
 #include <boost/shared_ptr.hpp>
@@ -60,7 +64,7 @@ namespace srv_kinematics_plugin
 {
 /**
  * @brief Specific implementation of kinematics using ROS service calls to communicate with
-   external IK solvers. This version can be used with any robot.
+   external IK solvers. This version can be used with any robot. Supports non-chain kinematic groups
  */
   class SrvKinematicsPlugin : public kinematics::KinematicsBase
   {
@@ -147,7 +151,6 @@ namespace srv_kinematics_plugin
 
   protected:
 
-    // RequestIK from remote node
     virtual bool searchPositionIK(const geometry_msgs::Pose &ik_pose,
                                   const std::vector<double> &ik_seed_state,
                                   double timeout,
@@ -157,7 +160,6 @@ namespace srv_kinematics_plugin
                                   const std::vector<double> &consistency_limits,
                                   const kinematics::KinematicsQueryOptions &options = kinematics::KinematicsQueryOptions()) const;
 
-    // RequestIK from remote node
     virtual bool searchPositionIK(const std::vector<geometry_msgs::Pose> &ik_poses,
                                   const std::vector<double> &ik_seed_state,
                                   double timeout,
@@ -180,11 +182,8 @@ namespace srv_kinematics_plugin
     bool active_; /** Internal variable that indicates whether solvers are configured and ready */
 
     moveit_msgs::KinematicSolverInfo ik_group_info_; /** Stores information for the inverse kinematics solver */
-    moveit_msgs::KinematicSolverInfo fk_group_info_; /** Store information for the forward kinematics solver */
 
     unsigned int dimension_; /** Dimension of the group */
-
-    mutable random_numbers::RandomNumberGenerator random_number_generator_;
 
     robot_model::RobotModelPtr robot_model_;
     robot_model::JointModelGroup* joint_model_group_;
